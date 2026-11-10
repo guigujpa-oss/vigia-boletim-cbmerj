@@ -56,7 +56,7 @@ export async function keepAlive() {
   }
 }
 
-// 2. Verificar novo boletim
+// 2. Verificar novos boletins (com suporte a múltiplos boletins em ordem crescente)
 export async function checkNewBulletin() {
   const cookie = getCookie();
   if (!cookie) {
@@ -84,7 +84,7 @@ export async function checkNewBulletin() {
 
   const html = await res.text();
 
-  // Procurar links de boletim: /boletim/exibirBoletim/<ID>
+  // Procurar todos os links de boletim: /boletim/exibirBoletim/<ID>
   const matches = [...html.matchAll(/href=['"][^'"]*\/boletim\/exibirBoletim\/(\d+)['"][^>]*>([\s\S]*?)<\/a>/gi)];
 
   if (matches.length === 0) {
@@ -92,61 +92,97 @@ export async function checkNewBulletin() {
     return null;
   }
 
-  // Primeiro link da lista é o mais recente
-  const latestMatch = matches[0];
-  const bulletinId = latestMatch[1];
-  const bulletinName = latestMatch[2].replace(/<[^>]+>/g, '').trim();
+  const allBulletins = matches.map(m => {
+    const id = m[1];
+    const name = m[2].replace(/<[^>]+>/g, '').trim();
+    const numMatch = name.match(/BOL\s*([0-9]+)/i);
+    const num = numMatch ? parseInt(numMatch[1], 10) : parseInt(id, 10);
+    return { id, name, num };
+  });
 
   const state = loadState();
 
-  if (state.lastId === bulletinId) {
-    console.log(`[Vigia] Sem novidades. Último boletim processado continua sendo: ${bulletinName} (ID: ${bulletinId})`);
+  // Determinar o último número processado (ex: BOL 203)
+  let lastNum = state.lastNumber;
+  if (!lastNum && state.lastName) {
+    const nm = state.lastName.match(/BOL\s*([0-9]+)/i);
+    if (nm) lastNum = parseInt(nm[1], 10);
+  }
+  if (!lastNum && state.lastId === '913165') {
+    lastNum = 203;
+  }
+
+  // Filtrar apenas boletins mais recentes que o último processado
+  const newBulletins = allBulletins.filter(b => {
+    if (lastNum && b.num) return b.num > lastNum;
+    return b.id !== state.lastId;
+  });
+
+  if (newBulletins.length === 0) {
+    console.log(`[Vigia] Sem novidades. Último boletim processado continua sendo: ${state.lastName || 'BOL203'} (ID: ${state.lastId || '913165'})`);
     return null;
   }
 
-  console.log(`\n🎉 [Vigia] NOVO BOLETIM DETECTADO!`);
-  console.log(`Nome: ${bulletinName} | ID: ${bulletinId}`);
+  // ORDENAÇÃO ESTRITA: Sempre em ordem crescente de número (ex: BOL 204, depois BOL 205)
+  newBulletins.sort((a, b) => a.num - b.num);
 
-  // 3. Baixar PDF do novo boletim
-  if (!fs.existsSync(BOLETINS_DIR)) fs.mkdirSync(BOLETINS_DIR, { recursive: true });
-  const pdfUrl = `https://intranet.cbmerj.rj.gov.br/sistemas/boletim/index.php/boletim/exibirBoletim/${bulletinId}`;
-  const pdfDest = path.join(BOLETINS_DIR, `${bulletinName.replace(/[\s\/\\]+/g, '_')}_${bulletinId}.pdf`);
+  console.log(`\n🎉 [Vigia] ${newBulletins.length} NOVO(S) BOLETIM(NS) DETECTADO(S)!`);
+  console.log(`Fila de envio em ordem crescente: ${newBulletins.map(b => b.name).join(' ➡️ ')}`);
 
-  console.log(`[Vigia] Baixando PDF de: ${pdfUrl}...`);
-  const dlRes = await fetch(pdfUrl, {
-    headers: {
-      'Cookie': cookie,
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+  // Processar cada boletim individualmente e sequencialmente
+  for (let idx = 0; idx < newBulletins.length; idx++) {
+    const b = newBulletins[idx];
+    console.log(`\n--- [Vigia] (${idx + 1}/${newBulletins.length}) Processando ${b.name} (ID: ${b.id}) ---`);
+
+    // Baixar PDF do boletim
+    if (!fs.existsSync(BOLETINS_DIR)) fs.mkdirSync(BOLETINS_DIR, { recursive: true });
+    const pdfUrl = `https://intranet.cbmerj.rj.gov.br/sistemas/boletim/index.php/boletim/exibirBoletim/${b.id}`;
+    const pdfDest = path.join(BOLETINS_DIR, `${b.name.replace(/[\s\/\\]+/g, '_')}_${b.id}.pdf`);
+
+    console.log(`[Vigia] Baixando PDF de: ${pdfUrl}...`);
+    const dlRes = await fetch(pdfUrl, {
+      headers: {
+        'Cookie': cookie,
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      }
+    });
+
+    if (!dlRes.ok) {
+      console.error(`[Vigia] Erro ao baixar PDF do ${b.name}: ${dlRes.status}`);
+      continue;
     }
-  });
 
-  if (!dlRes.ok) {
-    console.error(`[Vigia] Erro ao baixar PDF: ${dlRes.status}`);
-    return null;
+    const arrayBuffer = await dlRes.arrayBuffer();
+    fs.writeFileSync(pdfDest, Buffer.from(arrayBuffer));
+    console.log(`[Vigia] PDF salvo com sucesso em: ${pdfDest}`);
+
+    // Analisar com triagem contextual
+    console.log(`[Vigia] Analisando conteúdo do ${b.name}...`);
+    const analysis = await parseAndFilterBulletin(pdfDest, b.name);
+
+    // Enviar para o Telegram (Texto detalhado + PDF anexo)
+    console.log(`[Vigia] Enviando ${b.name} para o Telegram...`);
+    await sendTelegramText(CHAT_ID, analysis);
+    await sendTelegramDocument(CHAT_ID, pdfDest, `Boletim da SEDEC/CBMERJ: ${b.name}`);
+
+    // Atualizar estado salvo com número do boletim
+    saveState({
+      lastId: b.id,
+      lastName: b.name,
+      lastNumber: b.num,
+      processedAt: new Date().toISOString()
+    });
+
+    console.log(`[Vigia] ${b.name} processado e entregue com sucesso!`);
+
+    // Pausa de 3 segundos entre envios para o Telegram entregar em ordem cronológica perfeita
+    if (idx < newBulletins.length - 1) {
+      console.log('[Vigia] Aguardando 3 segundos para o próximo boletim da fila...');
+      await new Promise(r => setTimeout(r, 3000));
+    }
   }
 
-  const arrayBuffer = await dlRes.arrayBuffer();
-  fs.writeFileSync(pdfDest, Buffer.from(arrayBuffer));
-  console.log(`[Vigia] PDF salvo com sucesso em: ${pdfDest}`);
-
-  // 4. Analisar com triagem profunda
-  console.log('[Vigia] Extraindo e analisando conteúdo detalhado...');
-  const analysis = await parseAndFilterBulletin(pdfDest, bulletinName);
-
-  // 5. Enviar para o Telegram
-  console.log('[Vigia] Enviando relatório e PDF para o Telegram...');
-  await sendTelegramText(CHAT_ID, analysis);
-  await sendTelegramDocument(CHAT_ID, pdfDest, `Boletim CBMERJ: ${bulletinName}`);
-
-  // 6. Atualizar estado salvo
-  saveState({
-    lastId: bulletinId,
-    lastName: bulletinName,
-    processedAt: new Date().toISOString()
-  });
-
-  console.log(`[Vigia] Concluído com sucesso para ${bulletinName}!`);
-  return bulletinId;
+  return newBulletins.map(b => b.id);
 }
 
 // Parser contextual e inteligente com garantia de qualidade militar
