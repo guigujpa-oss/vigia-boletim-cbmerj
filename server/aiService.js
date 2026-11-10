@@ -2,11 +2,67 @@ import fs from 'fs';
 
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const PRIMARY_MODEL = 'openai/gpt-oss-120b';
-const FALLBACK_MODELS = ['openai/gpt-oss-20b', 'qwen/qwen3.8-27b'];
+const FALLBACK_MODELS = ['qwen/qwen3.8-27b', 'openai/gpt-oss-20b'];
 
 /**
- * Extrai cirurgicamente apenas as linhas essenciais com contexto (+/- 6 linhas),
- * garantindo economia extrema de tokens para NUNCA estourar rate limit.
+ * Converte qualquer tabela Markdown gerada pela IA em blocos verticais perfeitamente legíveis no WhatsApp.
+ */
+function convertMarkdownTablesToWhatsApp(text) {
+  const lines = text.split('\n');
+  const result = [];
+  let headers = null;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (line.startsWith('|') && line.endsWith('|')) {
+      const cols = line.slice(1, -1).split('|').map(c => c.trim().replace(/<br\s*\/?>/gi, ', '));
+      // Pular linha separadora de tabela |---|---|
+      if (cols.every(c => /^[-:\s]+$/.test(c))) {
+        continue;
+      }
+      // Primeira linha são os cabeçalhos
+      if (!headers) {
+        headers = cols;
+        continue;
+      }
+      // Linhas de dados: gerar bloco vertical legível
+      result.push(`• *${cols[1] || cols[0]}*`);
+      cols.forEach((val, idx) => {
+        if (val && headers[idx] && idx !== 1) {
+          result.push(`  ${headers[idx]}: ${val}`);
+        }
+      });
+      result.push('');
+    } else {
+      headers = null;
+      result.push(lines[i]);
+    }
+  }
+  return result.join('\n');
+}
+
+/**
+ * Higieniza o texto completo para o padrão nativo do WhatsApp/Telegram.
+ */
+function sanitizeForWhatsApp(rawText) {
+  // 1. Converter tabelas markdown em listas verticais
+  let text = convertMarkdownTablesToWhatsApp(rawText);
+
+  // 2. Limpar sintaxe markdown incompatível
+  return text
+    // Remove cabeçalhos markdown ###, ##, #
+    .replace(/^#{1,6}\s+/gm, '')
+    // Converte negrito duplo **texto** para negrito WhatsApp *texto*
+    .replace(/\*\*([^*]+)\*\*/g, '*$1*')
+    // Remove linhas tracejadas --- ou ___
+    .replace(/^[-_]{3,}\s*$/gm, '')
+    // Substitui múltiplos espaços e quebras excessivas
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+/**
+ * Extrai cirurgicamente apenas as linhas essenciais com contexto (+/- 6 linhas).
  */
 export function extractRelevantContext(pages, userName = 'Guilherme Martins Botelho') {
   const snippets = [];
@@ -59,7 +115,7 @@ export function extractRelevantContext(pages, userName = 'Guilherme Martins Bote
     }
   }
 
-  // Limite máximo seguro: 9.000 caracteres (~2.000 tokens)
+  // Limite máximo seguro: 9.000 caracteres
   let totalChars = 0;
   const pruned = [];
   for (const s of snippets) {
@@ -107,25 +163,7 @@ async function callGroqWithRetry(apiKey, payload, maxRetries = 2) {
 }
 
 /**
- * Limpa qualquer resquício de sintaxe markdown inadequada para WhatsApp
- */
-function cleanWhatsAppText(text) {
-  return text
-    // Remove cabeçalhos markdown ### ou ##
-    .replace(/^#{1,6}\s+/gm, '')
-    // Substitui **negrito** por *negrito*
-    .replace(/\*\*([^*]+)\*\*/g, '*$1*')
-    // Remove linhas horizontais markdown --- ou ___
-    .replace(/^[-_]{3,}\s*$/gm, '')
-    // Remove tabelas markdown caso a IA tente gerar
-    .replace(/\|[^\n]+\|/g, '')
-    // Limpa excesso de quebras de linha consecutivas
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
-}
-
-/**
- * Gera a análise de inteligência militar 100% otimizada para WhatsApp e Telegram Mobile.
+ * Gera a análise de inteligência militar 100% otimizada para WhatsApp e Telegram.
  */
 export async function analyzeBulletinWithAI({ bulletinName, totalPages, pages, fileName = 'boletim.pdf', userName = 'Guilherme Martins Botelho' }) {
   const apiKey = process.env.GROQ_API_KEY;
@@ -146,7 +184,7 @@ Tipo de publicação: Boletim ostensivo diário.
 Arquivo analisado: ${fileName}.
 
 RESUMO EXECUTIVO
-Nenhuma publicação de interesse direto identificada para o 2º GMar ou CBA X neste boletim.
+Nenhuma publicação de interesse operacional ou administrativo identificada para o 2º GMar ou CBA X neste boletim.
 
 RELAÇÃO DIRETA COM ${userName.toUpperCase()}
 Não localizei menção direta a ${userName} neste boletim.
@@ -160,16 +198,16 @@ Nenhuma providência administrativa necessária para o 2º GMar / CBA X.`;
     formattedExtracts += `\n[PÁGINA ${snip.pageNum}]\n${snip.text}\n`;
   }
 
-  const systemPrompt = `Você é o Oficial Ajudante e Analista Militar de Inteligência Administrativa do CBMERJ, prestando assessoria ao Oficial ${userName} e ao Comando do 2º GMar / CBA X.
+  const systemPrompt = `Você é o Oficial Ajudante e Analista Militar de Inteligência Administrativa do CBMERJ, prestando assessoria direta ao Oficial ${userName} e ao Comando do 2º GMar / CBA X.
 
-SUA MENSAGEM SERÁ LIDA DIRETAMENTE NO SMARTPHONE VIA WHATSAPP E TELEGRAM.
-É TERMINANTEMENTE PROIBIDO:
-1. NÃO use tabelas com barras verticais (| coluna 1 | coluna 2 |). Tabelas quebram totalmente e ficam ilegíveis no WhatsApp.
-2. NÃO use linhas horizontais tracejadas (--- ou ___).
-3. NÃO use cabeçalhos de markdown com cerquilha (### ou ##).
-4. NÃO use asterisco duplo (**texto**). Para negrito no WhatsApp use apenas UM asterisco (*texto*).
+ESTE RELATÓRIO É PARA LEITURA NO WHATSAPP / TELEGRAM EM TELAS DE CELULAR.
+REGRAS OBRIGATÓRIAS DE FORMATAÇÃO:
+1. NUNCA use tabelas com barras (| Coluna 1 | Coluna 2 |). Use SEMPRE listas com tópicos verticais.
+2. NUNCA use linhas horizontais com traços (---).
+3. NUNCA use cabeçalhos markdown com cerquilha (###).
+4. Use apenas *negrito* simples do WhatsApp (um único asterisco).
 
-ESTRUTURA EXATA PARA WHATSAPP:
+ESTRUTURA A SEGUIR:
 
 Análise do Boletim para ${userName} — 2º GMar / CBA X
 
@@ -180,13 +218,13 @@ Tipo de publicação: Boletim ostensivo diário.
 Arquivo analisado: ${fileName}.
 
 RESUMO EXECUTIVO
-[Parágrafo corrido e objetivo destacando os principais tópicos do boletim de impacto para o 2º GMar e CBA X].
+[Parágrafo corrido e direto destacando os principais tópicos para o comando do 2º GMar e CBA X].
 
 ALERTAS PRIORITÁRIOS
 • Prioridade: ALTA (ou MÉDIA / BAIXA)
   Assunto: [Nome do Assunto]
   Quem é afetado: [Militares com Posto/Grad, Nome e RG]
-  Providência necessária: [Ação objetiva]
+  Providência necessária: [Ação exata a ser tomada]
   Prazo/data: [Prazo ou Imediato / A definir]
   Local/horário: [Local]
   Página ou referência: Página [XX]
@@ -196,7 +234,7 @@ RELAÇÃO DIRETA COM ${userName.toUpperCase()}
 
 RELAÇÃO COM O 2º GMAR
 Assunto: [Título da Matéria]
-O que foi publicado: [Texto detalhado citando militares e números]
+O que foi publicado: [Detalhamento do ato, citando nomes e RGs]
 Quem é afetado: [Militares e unidade]
 Providência: [Ação exata]
 Responsável: [Responsável]
@@ -204,23 +242,22 @@ Situação atual: [Vigente / Aguardando calendário / Em andamento]
 Página ou referência: Página [XX]
 
 RELAÇÃO COM O CBA X
-[Mesmo formato acima para matérias do CBA X].
+[Matérias do CBA X no mesmo formato acima].
 
 ASSUNTOS PARA O COMANDO DA UNIDADE
-• [Ação 1]
-• [Ação 2]
+• [Ação direta para o comando]
 
 ASSUNTOS GERAIS DO CBMERJ COM POSSÍVEL IMPACTO
-[Portarias gerais, alterações de normas, etc.]
+[Portarias corporativas gerais]
 
 PRAZOS E DATAS IMPORTANTES
-• [Data/Período]: [Assunto] (Situação: Vigente / Futura)
+• [Data]: [Assunto] (Situação: Vigente / Futura)
 
 ASSUNTOS SEM PROVIDÊNCIA IMEDIATA
 • [Matérias apenas para ciência ou arquivo]
 
 PONTOS QUE PRECISAM DE CONFIRMAÇÃO
-• [Verificações com DGS, DGP ou escalão superior]
+• [Verificações necessárias]
 
 CONCLUSÃO OBJETIVA
 Identifiquei providências para o 2º GMar ou para o comando da unidade.
@@ -229,7 +266,7 @@ Bom dia, senhores.
 Seguem, abaixo, os tópicos relacionados à unidade, extraídos do Boletim SEDEC/CBMERJ ${bulletinName}, com a indicação das respectivas páginas:
 
 • [Título da Matéria]
-Providência: [Ação concisa]
+Providência: [Texto conciso da ação]
 Responsável: [Responsável]
 Prazo/data: [Data]
 Situação: [Status]
@@ -237,10 +274,10 @@ Local/horário: [Local]
 Fonte: Boletim SEDEC/CBMERJ ${bulletinName}, página [XX].
 
 RESUMO ${bulletinName}
-- [Tópico 1]: [Resumo direto em 1 linha]
-- [Tópico 2]: [Resumo direto em 1 linha]`;
+- [Tópico 1]: [Resumo direto]
+- [Tópico 2]: [Resumo direto]`;
 
-  const userPrompt = `Analise com extremo rigor militar os extratos e gere o relatório estritamente no formato de texto limpo para WhatsApp:\n${formattedExtracts}`;
+  const userPrompt = `Analise os extratos e gere o relatório militar em texto limpo e vertical para WhatsApp:\n${formattedExtracts}`;
 
   const models = [PRIMARY_MODEL, ...FALLBACK_MODELS];
   let lastError = null;
@@ -260,7 +297,7 @@ RESUMO ${bulletinName}
 
       const rawContent = data.choices?.[0]?.message?.content?.trim();
       if (rawContent) {
-        const cleaned = cleanWhatsAppText(rawContent);
+        const cleaned = sanitizeForWhatsApp(rawContent);
         console.log(`[AI Service] Sucesso com modelo ${model}! (${cleaned.length} caracteres prontos para WhatsApp).`);
         return cleaned;
       }
