@@ -15,7 +15,6 @@ const STATE_FILE = path.join(DATA_DIR, 'last_bulletin.json');
 const BOLETINS_DIR = path.join(DATA_DIR, 'boletins');
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '1088891648';
 
-// Cookie da sessão da Intranet CBMERJ (persistido / atualizável via env ou arquivo)
 const COOKIE_FILE = path.join(DATA_DIR, 'intranet_cookie.txt');
 
 function getCookie() {
@@ -85,7 +84,7 @@ export async function checkNewBulletin() {
 
   const html = await res.text();
 
-  // Find all boletim links: /boletim/exibirBoletim/<ID>
+  // Procurar links de boletim: /boletim/exibirBoletim/<ID>
   const matches = [...html.matchAll(/href=['"][^'"]*\/boletim\/exibirBoletim\/(\d+)['"][^>]*>([\s\S]*?)<\/a>/gi)];
 
   if (matches.length === 0) {
@@ -93,7 +92,7 @@ export async function checkNewBulletin() {
     return null;
   }
 
-  // First item is the latest
+  // Primeiro link da lista é o mais recente
   const latestMatch = matches[0];
   const bulletinId = latestMatch[1];
   const bulletinName = latestMatch[2].replace(/<[^>]+>/g, '').trim();
@@ -130,8 +129,8 @@ export async function checkNewBulletin() {
   fs.writeFileSync(pdfDest, Buffer.from(arrayBuffer));
   console.log(`[Vigia] PDF salvo com sucesso em: ${pdfDest}`);
 
-  // 4. Analisar e Extrair Texto
-  console.log('[Vigia] Extraindo e analisando conteúdo...');
+  // 4. Analisar com triagem profunda
+  console.log('[Vigia] Extraindo e analisando conteúdo detalhado...');
   const analysis = await parseAndFilterBulletin(pdfDest, bulletinName);
 
   // 5. Enviar para o Telegram
@@ -150,15 +149,15 @@ export async function checkNewBulletin() {
   return bulletinId;
 }
 
-// Lógica de parser e filtros conforme as instruções do usuário
-async function parseAndFilterBulletin(pdfPath, bulletinName) {
+// Parser contextual e inteligente (elimina ruído estatístico e extrai matérias reais)
+export async function parseAndFilterBulletin(pdfPath, bulletinName) {
   const dataBuffer = fs.readFileSync(pdfPath);
   const parser = new PDFParse({ data: dataBuffer });
   await parser.load();
   const textRes = await parser.getText();
   const fullText = textRes.text;
 
-  // Split into pages
+  // Separar páginas
   const pageSections = fullText.split(/\n-- (\d+) of \d+ --\n/);
   const pages = [];
   if (pageSections.length > 1) {
@@ -169,55 +168,116 @@ async function parseAndFilterBulletin(pdfPath, bulletinName) {
     pages.push({ pageNum: 1, text: fullText });
   }
 
-  // Header
+  // Header do boletim
   const first3 = pages.slice(0, 3).map(p => p.text).join('\n');
   const numMatch = first3.match(/N[º°\.\s]*([0-9]+)[,\s]+DE\s+([0-9]{2}\/[0-9]{2}\/[0-9]{4}|\d{1,2}\s+DE\s+[A-ZÇ]+\s+DE\s+\d{4})/i);
   const bolHeader = numMatch ? numMatch[0] : bulletinName;
 
-  // Search terms
-  const terms = [
-    { key: 'usuario', label: 'Guilherme Martins Botelho', regex: /Guilherme\s+Martins\s+Botelho|Guilherme\s+Martins/i },
-    { key: 'gmar', label: '2º GMar', regex: /2[º°\.\s]*G(?:MAR|rupamento\s+Mar[íi]timo)/i },
-    { key: 'cbax', label: 'CBA X', regex: /CBA[\s\-]*(?:X|10|DEZ)/i },
-    { key: 'cmd1', label: 'Rafael da Silva Ferreira', regex: /Rafael\s+da\s+Silva\s+Ferreira/i },
-    { key: 'cmd2', label: 'Diogo Fellipe Taveira Santos', regex: /Diogo\s+Fellipe\s+Taveira\s+Santos/i },
-    { key: 'cmd3', label: 'Ruan Carlos Gasiglia do Amaral', regex: /Ruan\s+Carlos\s+Gasiglia/i },
-    { key: 'maritimo', label: 'Salvamento Marítimo / CSMAR / Praias', regex: /CSMAR|Salvamento\s+Mar[íi]timo|Guarda[\s\-]Vidas/i }
-  ];
+  const rawMatters = [];
 
-  const occurrences = [];
-  for (const p of pages) {
-    for (const t of terms) {
-      if (t.regex.test(p.text)) {
-        const lines = p.text.split('\n').filter(l => t.regex.test(l));
-        occurrences.push({ key: t.key, label: t.label, page: p.pageNum, snippet: lines.join(' | ').substring(0, 200) });
+  for (const page of pages) {
+    // 1. Ignorar sumário/índice (páginas 1 a 3 com linhas pontilhadas)
+    if (page.pageNum <= 3) continue;
+
+    // 2. Ignorar páginas de estatísticas diárias de socorros
+    if (page.text.includes('ESTATÍSTICA DE SOCORROS PRESTADOS') || page.text.includes('MÉDIA DE EVENTOS POR HORA')) {
+      continue;
+    }
+
+    const lines = page.text.split('\n');
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+
+      // Ignorar ruído de rodapé ou fontes meramente estatísticas
+      if (line.includes('*FONTE:') || line.includes('DGCCO/CBA X/GOA')) continue;
+
+      const hasUser = /Guilherme\s+Martins\s+Botelho|Guilherme\s+Martins/i.test(line);
+      const hasGmar = /2[º°\.\s]*G(?:MAR|rupamento\s+Mar[íi]timo)/i.test(line);
+      const hasCbax = /CBA[\s\-]*(?:X|10|DEZ)/i.test(line);
+      const hasCmd = /Rafael\s+da\s+Silva\s+Ferreira|Diogo\s+Fellipe\s+Taveira|Ruan\s+Carlos\s+Gasiglia/i.test(line);
+      const hasCsmar = /CSMAR|Curso\s+de\s+Salvamento\s+no\s+Mar/i.test(line);
+
+      if (hasUser || hasGmar || hasCbax || hasCmd || (hasCsmar && page.pageNum > 3)) {
+        // Encontrar título da matéria / nota
+        let title = '';
+        for (let k = i; k >= Math.max(0, i - 20); k--) {
+          const l = lines[k].trim();
+          if (/^(?:[0-9]+\.|\bEDITAL\b|\bNOTA\b|\bPORTARIA\b|[I|V|X]+\s*[-–]|\bANEXO\b|[A-ZÇÃÕ\s]{6,})/i.test(l) && l.length > 5 && l.length < 130) {
+            title = l;
+            break;
+          }
+        }
+        if (!title) {
+          title = hasUser ? 'Publicação Nominal' : (hasGmar ? '2º GMar' : (hasCbax ? 'CBA X' : 'Salvamento Marítimo'));
+        }
+
+        // Capturar o contexto do parágrafo ao redor
+        const start = Math.max(0, i - 3);
+        const end = Math.min(lines.length, i + 8);
+        const contextLines = lines.slice(start, end)
+          .map(l => l.trim())
+          .filter(l => l.length > 0 && !l.startsWith('BOLETIM DA SEDEC') && !l.includes('*FONTE:'));
+
+        const snippet = contextLines.join(' ').replace(/\s{2,}/g, ' ');
+
+        rawMatters.push({
+          page: page.pageNum,
+          isUser: hasUser,
+          isGmar: hasGmar,
+          isCbax: hasCbax,
+          isCmd: hasCmd,
+          title: title,
+          snippet: snippet
+        });
+
+        // Pular linhas para agrupar na mesma matéria
+        i += 6;
       }
     }
   }
 
-  // Build formatted report
+  // Agrupar matérias para evitar duplicidade de páginas ou notas
+  const distinctMatters = [];
+  for (const m of rawMatters) {
+    const key = `${m.page}-${m.title.substring(0, 20)}`;
+    const exists = distinctMatters.find(d => `${d.page}-${d.title.substring(0, 20)}` === key || (Math.abs(d.page - m.page) <= 1 && d.title === m.title));
+    if (!exists) {
+      distinctMatters.push(m);
+    }
+  }
+
+  // Construir Relatório Detalhado
   let report = `Análise do Boletim para Guilherme Martins Botelho — 2º GMar / CBA X\n\n`;
   report += `1. IDENTIFICAÇÃO DO DOCUMENTO\n• Órgão: SEDEC / CBMERJ\n• Boletim: ${bolHeader}\n• Total de Páginas: ${pages.length}\n\n`;
 
-  const gmarOccs = occurrences.filter(o => o.key === 'gmar' || o.key === 'cbax' || o.key === 'usuario');
+  const userMentions = distinctMatters.filter(m => m.isUser);
+  const gmarMentions = distinctMatters.filter(m => m.isGmar || m.isCbax || m.isCmd);
 
-  if (gmarOccs.length === 0) {
+  if (distinctMatters.length === 0) {
     report += `2. RESUMO EXECUTIVO\nNão foram identificadas publicações ou ordens diretamente relacionadas a Guilherme Martins Botelho, ao 2º GMar ou ao CBA X neste boletim.\n\n`;
-    report += `MENSAGEM PRONTA PARA ENCAMINHAMENTO:\n\nBom dia, senhores.\n\nNão identifiquei, neste boletim, tópicos diretamente relacionados a Guilherme Martins Botelho, ao 2º GMar, ao CBA X ou ao comando da unidade.`;
+    report += `MENSAGEM PRONTA PARA ENCAMINHAMENTO:\n\nBom dia, senhores.\n\nNão identifiquei, neste boletim (${bolHeader}), tópicos diretamente relacionados a Guilherme Martins Botelho, ao 2º GMar, ao CBA X ou ao comando da unidade.`;
     return report;
   }
 
-  report += `2. RESUMO EXECUTIVO\nForam localizadas ${gmarOccs.length} menções de interesse ao 2º GMar / CBA X no ${bolHeader}, abrangendo notas e atos com impacto operacional e administrativo.\n\n`;
+  report += `2. RESUMO EXECUTIVO\n`;
+  if (userMentions.length > 0) {
+    report += `⚠️ ATENÇÃO: Identificada publicação nominal referente a Guilherme Martins Botelho (Fl. ${userMentions.map(u => u.page).join(', ')}).\n`;
+  } else {
+    report += `• Publicação Nominal: Não há menção a Guilherme Martins Botelho.\n`;
+  }
+  report += `• Unidade / Comando: Foram localizadas ${distinctMatters.length} publicações com reflexo operacional e administrativo para o 2º GMar / CBA X.\n\n`;
 
-  report += `3. ALERTAS PRIORITÁRIOS:\n`;
-  for (const o of occurrences.slice(0, 6)) {
-    report += `• [Pág. ${o.page}] ${o.label}: ${o.snippet}\n`;
+  report += `3. ALERTAS PRIORITÁRIOS E DETALHAMENTO:\n`;
+  for (const m of distinctMatters.slice(0, 6)) {
+    const tag = m.isUser ? '🚨 PRIORIDADE MÁXIMA' : '⚠️ RELEVANTE';
+    report += `${tag} | Fl. ${m.page}\n• Tópico: ${m.title}\n• Detalhamento: ${m.snippet.substring(0, 300)}...\n\n`;
   }
 
-  report += `\n---\n\nMENSAGEM PRONTA PARA ENCAMINHAMENTO:\n\nBom dia, senhores.\n\nSeguem, abaixo, os tópicos relacionados à unidade, extraídos do Boletim da SEDEC/CBMERJ (${bolHeader}), com a indicação das respectivas páginas:\n\n`;
+  report += `---\n\nMENSAGEM PRONTA PARA ENCAMINHAMENTO:\n\nBom dia, senhores.\n\nSeguem, abaixo, os tópicos relacionados à unidade, extraídos do Boletim da SEDEC/CBMERJ (${bolHeader}), com a indicação das respectivas páginas:\n\n`;
 
-  for (const o of gmarOccs.slice(0, 5)) {
-    report += `• [${o.label}]\n  - Assunto / Trecho: ${o.snippet}\n  - Fonte: Boletim da SEDEC/CBMERJ, página ${o.page}.\n\n`;
+  for (const m of distinctMatters.slice(0, 5)) {
+    report += `• [${m.title}]\n  - Detalhamento: ${m.snippet.substring(0, 250)}...\n  - Fonte: Boletim da SEDEC/CBMERJ, página ${m.page}.\n\n`;
   }
 
   return report;
@@ -228,14 +288,12 @@ if (process.argv[1] && process.argv[1].endsWith('boletimWatcher.js')) {
   const args = process.argv.slice(2);
   const isOnce = args.includes('--once');
   
-  // Intervalo em segundos (padrão: 30 segundos no modo instantâneo)
   let intervalSec = 30;
   const intervalArg = args.find(a => a.startsWith('--interval='));
   if (intervalArg) {
     intervalSec = parseInt(intervalArg.split('=')[1], 10) || 30;
   }
 
-  // Duração total em minutos (se aplicável, ex: 25 minutos por ciclo no GitHub Actions)
   let durationMin = null;
   const durationArg = args.find(a => a.startsWith('--duration='));
   if (durationArg) {
@@ -261,7 +319,6 @@ if (process.argv[1] && process.argv[1].endsWith('boletimWatcher.js')) {
       }
     })();
   } else {
-    // Modo Instantâneo (Loop a cada intervalSec segundos)
     (async () => {
       await keepAlive();
       await checkNewBulletin();
@@ -272,7 +329,6 @@ if (process.argv[1] && process.argv[1].endsWith('boletimWatcher.js')) {
       const timer = setInterval(async () => {
         secondsElapsed += intervalSec;
 
-        // Keep-Alive a cada 5 minutos (300s)
         if (secondsElapsed % 300 === 0) {
           await keepAlive();
         }
@@ -283,7 +339,6 @@ if (process.argv[1] && process.argv[1].endsWith('boletimWatcher.js')) {
           console.error('[Vigia] Erro na checagem:', err.message);
         }
 
-        // Se tiver limite de duração definido para o runner (ex: 25 minutos)
         if (durationMin && secondsElapsed >= durationMin * 60) {
           console.log(`[Vigia] Tempo da sessão de ${durationMin} minutos atingido. Finalizando ciclo com sucesso.`);
           clearInterval(timer);
@@ -293,4 +348,3 @@ if (process.argv[1] && process.argv[1].endsWith('boletimWatcher.js')) {
     })();
   }
 }
-
