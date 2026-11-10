@@ -1,4 +1,4 @@
-name: Vigia Boletim CBMERJ 24/7 (Instantâneo 30s)
+name: Vigia Boletim CBMERJ 24/7
 
 on:
   schedule:
@@ -8,7 +8,7 @@ on:
 
 concurrency:
   group: vigia-boletim
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 permissions:
   contents: write
