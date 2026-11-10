@@ -1,0 +1,42 @@
+name: Vigia Boletim CBMERJ 24/7
+
+on:
+  schedule:
+    # Executa a cada 15 minutos (cron do GitHub Actions)
+    - cron: '*/15 * * * *'
+  workflow_dispatch: # Permite disparo manual com 1 clique no painel do GitHub Actions
+
+permissions:
+  contents: write # Permite salvar data/last_bulletin.json de volta no repositório
+
+jobs:
+  vigiar-boletim:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Baixar código do repositório
+        uses: actions/checkout@v4
+
+      - name: Configurar ambiente Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Instalar dependências
+        run: npm install --omit=dev
+
+      - name: Executar Checagem de Boletim CBMERJ
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          INTRANET_COOKIE: ${{ secrets.INTRANET_COOKIE }}
+          GITHUB_ACTIONS: 'true'
+        run: node server/boletimWatcher.js --once
+
+      - name: Persistir estado do último boletim processado
+        run: |
+          git config --global user.name "Boletim Bot CBMERJ"
+          git config --global user.email "bot-boletim@cbmerj.local"
+          git add data/last_bulletin.json
+          git diff --quiet && git diff --staged --quiet || (git commit -m "chore: atualizar status do ultimo boletim [skip ci]" && git push)

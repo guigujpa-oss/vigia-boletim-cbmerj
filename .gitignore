@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.env
+data/boletins/
+data/whatsapp_auth/
+data/intranet_cookie.txt
+npm-debug.log*
+.DS_Store
+Thumbs.db
