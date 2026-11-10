@@ -149,7 +149,7 @@ export async function checkNewBulletin() {
   return bulletinId;
 }
 
-// Parser contextual e inteligente (elimina ruído estatístico e extrai matérias reais)
+// Parser contextual e inteligente com garantia de qualidade militar
 export async function parseAndFilterBulletin(pdfPath, bulletinName) {
   const dataBuffer = fs.readFileSync(pdfPath);
   const parser = new PDFParse({ data: dataBuffer });
@@ -176,21 +176,23 @@ export async function parseAndFilterBulletin(pdfPath, bulletinName) {
   const rawMatters = [];
 
   for (const page of pages) {
-    // 1. Ignorar sumário/índice (páginas 1 a 3 com linhas pontilhadas)
+    // 1. Ignorar páginas de sumário/índice (1 a 3 com linhas pontilhadas)
     if (page.pageNum <= 3) continue;
 
-    // 2. Ignorar páginas de estatísticas diárias de socorros
-    if (page.text.includes('ESTATÍSTICA DE SOCORROS PRESTADOS') || page.text.includes('MÉDIA DE EVENTOS POR HORA')) {
+    // 2. Ignorar páginas e tabelas de estatísticas diárias de socorro
+    if (page.text.includes('ESTATÍSTICA DE SOCORROS PRESTADOS') || page.text.includes('MÉDIA DE EVENTOS POR HORA') || page.text.includes('TOTAL DE EVENTOS ACUMULADOS')) {
       continue;
     }
 
     const lines = page.text.split('\n');
 
     for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
+      const line = lines[i].trim();
 
-      // Ignorar ruído de rodapé ou fontes meramente estatísticas
-      if (line.includes('*FONTE:') || line.includes('DGCCO/CBA X/GOA')) continue;
+      // Descartar linhas de cabeçalho padrão, rodapés estatísticos e fontes genéricas
+      if (!line || line.startsWith('BOLETIM DA SEDEC') || line.includes('*FONTE:') || line.includes('DGCCO/CBA X/GOA') || line.startsWith('FL.') || line.includes('Corpo de Bombeiros Militar do Estado')) {
+        continue;
+      }
 
       const hasUser = /Guilherme\s+Martins\s+Botelho|Guilherme\s+Martins/i.test(line);
       const hasGmar = /2[º°\.\s]*G(?:MAR|rupamento\s+Mar[íi]timo)/i.test(line);
@@ -199,60 +201,89 @@ export async function parseAndFilterBulletin(pdfPath, bulletinName) {
       const hasCsmar = /CSMAR|Curso\s+de\s+Salvamento\s+no\s+Mar/i.test(line);
 
       if (hasUser || hasGmar || hasCbax || hasCmd || (hasCsmar && page.pageNum > 3)) {
-        // Encontrar título da matéria / nota
+        // Limpar ruídos da Intranet e do texto
+        let cleanLine = line.replace(/voltar_ao_sum[aá]rio/gi, '').trim();
+        
+        // Encontrar título da matéria / nota olhando para trás
         let title = '';
-        for (let k = i; k >= Math.max(0, i - 20); k--) {
-          const l = lines[k].trim();
-          if (/^(?:[0-9]+\.|\bEDITAL\b|\bNOTA\b|\bPORTARIA\b|[I|V|X]+\s*[-–]|\bANEXO\b|[A-ZÇÃÕ\s]{6,})/i.test(l) && l.length > 5 && l.length < 130) {
+        for (let k = i; k >= Math.max(0, i - 25); k--) {
+          const l = lines[k].replace(/voltar_ao_sum[aá]rio/gi, '').trim();
+          if (/^(?:[0-9]+\.|\bEDITAL\b|\bNOTA\b|\bPORTARIA\b|[I|V|X]+\s*[-–]|\bANEXO\b|[A-ZÇÃÕ\s]{6,})/i.test(l) && l.length > 5 && l.length < 130 && !l.includes('BOLETIM DA SEDEC')) {
             title = l;
             break;
           }
         }
-        if (!title) {
-          title = hasUser ? 'Publicação Nominal' : (hasGmar ? '2º GMar' : (hasCbax ? 'CBA X' : 'Salvamento Marítimo'));
+
+        // Títulos claros e semânticos se o cabeçalho for genérico
+        if (!title || title.length < 8 || title.includes('TORNA PÚBLICA')) {
+          if (hasCsmar || /CSMAR|Salvamento\s+no\s+Mar/i.test(cleanLine)) {
+            title = 'Edital do Curso de Salvamento no Mar (CSMar)';
+          } else if (/movimenta|transfer|apresenta|classifica|designa/i.test(cleanLine)) {
+            title = 'Movimentação / Transferência de Militares';
+          } else if (/escala|apoio|evento|riocentro|wrc/i.test(cleanLine)) {
+            title = 'Emprego Operacional / Escalação de Meios e Efetivo';
+          } else if (hasUser) {
+            title = 'Publicação Nominal — Guilherme Martins Botelho';
+          } else if (hasGmar) {
+            title = 'Nota de Interesse do 2º GMar (Barra da Tijuca)';
+          } else {
+            title = 'Determinação / Nota de Interesse do CBA X';
+          }
         }
 
-        // Capturar o contexto do parágrafo ao redor
-        const start = Math.max(0, i - 3);
-        const end = Math.min(lines.length, i + 8);
+        // Capturar contexto completo do parágrafo
+        const start = Math.max(0, i - 2);
+        const end = Math.min(lines.length, i + 9);
         const contextLines = lines.slice(start, end)
-          .map(l => l.trim())
-          .filter(l => l.length > 0 && !l.startsWith('BOLETIM DA SEDEC') && !l.includes('*FONTE:'));
+          .map(l => l.replace(/voltar_ao_sum[aá]rio/gi, '').trim())
+          .filter(l => l.length > 0 && !l.startsWith('BOLETIM DA SEDEC') && !l.includes('*FONTE:') && !l.startsWith('FL.'));
 
         const snippet = contextLines.join(' ').replace(/\s{2,}/g, ' ');
 
-        rawMatters.push({
-          page: page.pageNum,
-          isUser: hasUser,
-          isGmar: hasGmar,
-          isCbax: hasCbax,
-          isCmd: hasCmd,
-          title: title,
-          snippet: snippet
-        });
+        // Garantir qualidade mínima: o trecho precisa ter pelo menos 40 caracteres e conteúdo substantivo
+        if (snippet.length >= 40 && !snippet.includes('*FONTE: DGCCO')) {
+          rawMatters.push({
+            page: page.pageNum,
+            isUser: hasUser,
+            isGmar: hasGmar,
+            isCbax: hasCbax,
+            isCmd: hasCmd,
+            title: title.replace(/[_]{2,}/g, '').trim(),
+            snippet: snippet
+          });
 
-        // Pular linhas para agrupar na mesma matéria
-        i += 6;
+          i += 10; // Pular para evitar pegar múltiplos fragmentos da mesma nota
+        }
       }
     }
   }
 
-  // Agrupar matérias para evitar duplicidade de páginas ou notas
+  // Agrupar matérias para eliminar repetições na mesma página ou tema contíguo
   const distinctMatters = [];
   for (const m of rawMatters) {
-    const key = `${m.page}-${m.title.substring(0, 20)}`;
-    const exists = distinctMatters.find(d => `${d.page}-${d.title.substring(0, 20)}` === key || (Math.abs(d.page - m.page) <= 1 && d.title === m.title));
-    if (!exists) {
+    const isDuplicate = distinctMatters.some(d => {
+      const samePage = d.page === m.page;
+      const sameTheme = (d.title.includes('CSMar') && m.title.includes('CSMar')) || (d.title.includes('Movimentação') && m.title.includes('Movimentação'));
+      return samePage || (sameTheme && Math.abs(d.page - m.page) <= 2);
+    });
+
+    if (!isDuplicate) {
       distinctMatters.push(m);
     }
   }
 
-  // Construir Relatório Detalhado
+  // Ordenar priorizando publicações nominais primeiro, depois GMar e CBA X
+  distinctMatters.sort((a, b) => {
+    if (a.isUser && !b.isUser) return -1;
+    if (!a.isUser && b.isUser) return 1;
+    return a.page - b.page;
+  });
+
+  // Montar Relatório Executivo Estruturado
   let report = `Análise do Boletim para Guilherme Martins Botelho — 2º GMar / CBA X\n\n`;
   report += `1. IDENTIFICAÇÃO DO DOCUMENTO\n• Órgão: SEDEC / CBMERJ\n• Boletim: ${bolHeader}\n• Total de Páginas: ${pages.length}\n\n`;
 
   const userMentions = distinctMatters.filter(m => m.isUser);
-  const gmarMentions = distinctMatters.filter(m => m.isGmar || m.isCbax || m.isCmd);
 
   if (distinctMatters.length === 0) {
     report += `2. RESUMO EXECUTIVO\nNão foram identificadas publicações ou ordens diretamente relacionadas a Guilherme Martins Botelho, ao 2º GMar ou ao CBA X neste boletim.\n\n`;
@@ -262,22 +293,22 @@ export async function parseAndFilterBulletin(pdfPath, bulletinName) {
 
   report += `2. RESUMO EXECUTIVO\n`;
   if (userMentions.length > 0) {
-    report += `⚠️ ATENÇÃO: Identificada publicação nominal referente a Guilherme Martins Botelho (Fl. ${userMentions.map(u => u.page).join(', ')}).\n`;
+    report += `🚨 ATENÇÃO: Identificada publicação nominal referente a Guilherme Martins Botelho (Fl. ${userMentions.map(u => u.page).join(', ')}).\n`;
   } else {
-    report += `• Publicação Nominal: Não há menção a Guilherme Martins Botelho.\n`;
+    report += `• Publicação Nominal: Não há menção nominal a Guilherme Martins Botelho.\n`;
   }
-  report += `• Unidade / Comando: Foram localizadas ${distinctMatters.length} publicações com reflexo operacional e administrativo para o 2º GMar / CBA X.\n\n`;
+  report += `• Unidade / Comando: Foram localizadas ${distinctMatters.length} matérias de interesse operacional e administrativo para o 2º GMar / CBA X.\n\n`;
 
   report += `3. ALERTAS PRIORITÁRIOS E DETALHAMENTO:\n`;
-  for (const m of distinctMatters.slice(0, 6)) {
-    const tag = m.isUser ? '🚨 PRIORIDADE MÁXIMA' : '⚠️ RELEVANTE';
-    report += `${tag} | Fl. ${m.page}\n• Tópico: ${m.title}\n• Detalhamento: ${m.snippet.substring(0, 300)}...\n\n`;
+  for (const m of distinctMatters.slice(0, 5)) {
+    const tag = m.isUser ? '🚨 PRIORIDADE MÁXIMA' : '⚠️ PRIORIDADE ALTA';
+    report += `${tag} | Fl. ${m.page}\n• Matéria: ${m.title}\n• Providência / Resumo: ${m.snippet.substring(0, 320)}...\n\n`;
   }
 
   report += `---\n\nMENSAGEM PRONTA PARA ENCAMINHAMENTO:\n\nBom dia, senhores.\n\nSeguem, abaixo, os tópicos relacionados à unidade, extraídos do Boletim da SEDEC/CBMERJ (${bolHeader}), com a indicação das respectivas páginas:\n\n`;
 
   for (const m of distinctMatters.slice(0, 5)) {
-    report += `• [${m.title}]\n  - Detalhamento: ${m.snippet.substring(0, 250)}...\n  - Fonte: Boletim da SEDEC/CBMERJ, página ${m.page}.\n\n`;
+    report += `• [${m.title}]\n  - Providência / Resumo: ${m.snippet.substring(0, 260)}...\n  - Fonte: Boletim da SEDEC/CBMERJ, página ${m.page}.\n\n`;
   }
 
   return report;
