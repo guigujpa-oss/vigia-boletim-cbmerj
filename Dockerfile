@@ -13,3 +13,4 @@ ENV PORT=3000
 ENV CHECK_INTERVAL_SEC=30
 
 CMD ["node", "server/cloudWorker.js"]
+

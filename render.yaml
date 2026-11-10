@@ -15,3 +15,6 @@ services:
         sync: false
       - key: CHECK_INTERVAL_SEC
         value: "30"
+      - key: GROQ_API_KEY
+        sync: false
+

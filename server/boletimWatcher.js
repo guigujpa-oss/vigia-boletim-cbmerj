@@ -3,6 +3,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
 import { sendTelegramText, sendTelegramDocument } from './telegramService.js';
+import { analyzeBulletinWithAI } from './aiService.js';
 
 const require = createRequire(import.meta.url);
 const { PDFParse } = require('pdf-parse');
@@ -185,7 +186,7 @@ export async function checkNewBulletin() {
   return newBulletins.map(b => b.id);
 }
 
-// Parser contextual e inteligente com garantia de qualidade militar
+// Parser contextual e inteligente com garantia de qualidade militar via IA
 export async function parseAndFilterBulletin(pdfPath, bulletinName) {
   const dataBuffer = fs.readFileSync(pdfPath);
   const parser = new PDFParse({ data: dataBuffer });
@@ -209,6 +210,24 @@ export async function parseAndFilterBulletin(pdfPath, bulletinName) {
   const numMatch = first3.match(/N[º°\.\s]*([0-9]+)[,\s]+DE\s+([0-9]{2}\/[0-9]{2}\/[0-9]{4}|\d{1,2}\s+DE\s+[A-ZÇ]+\s+DE\s+\d{4})/i);
   const bolHeader = numMatch ? numMatch[0] : bulletinName;
 
+  // 1. Tentar análise de altíssimo padrão por Inteligência Artificial (Groq / Qwen / GPT-OSS)
+  try {
+    console.log(`[Vigia] Gerando análise militar via IA de alta performance para ${bolHeader}...`);
+    const aiAnalysis = await analyzeBulletinWithAI({
+      bulletinName: bolHeader,
+      totalPages: pages.length,
+      pages,
+      userName: 'Guilherme Martins Botelho'
+    });
+    if (aiAnalysis && aiAnalysis.length > 100) {
+      console.log(`[Vigia] Análise por IA concluída com sucesso (${aiAnalysis.length} caracteres).`);
+      return aiAnalysis;
+    }
+  } catch (err) {
+    console.warn(`[Vigia] Aviso: Análise por IA indisponível ou com erro (${err.message}). Utilizando parser de contingência.`);
+  }
+
+  // 2. Parser de Contingência Heurístico (Caso a API de IA esteja indisponível)
   const rawMatters = [];
 
   for (const page of pages) {
