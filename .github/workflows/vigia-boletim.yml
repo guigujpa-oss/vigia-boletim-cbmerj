@@ -40,3 +40,4 @@ jobs:
           git config --global user.email "bot-boletim@cbmerj.local"
           git add data/last_bulletin.json
           git diff --quiet && git diff --staged --quiet || (git commit -m "chore: atualizar status do ultimo boletim [skip ci]" && git push)
+
