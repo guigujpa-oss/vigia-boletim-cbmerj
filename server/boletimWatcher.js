@@ -223,12 +223,29 @@ async function parseAndFilterBulletin(pdfPath, bulletinName) {
   return report;
 }
 
-// Iniciar vigia contínuo ou execução pontual (CI / GitHub Actions)
+// Iniciar vigia contínuo, execução pontual ou modo instantâneo
 if (process.argv[1] && process.argv[1].endsWith('boletimWatcher.js')) {
-  const isOnce = process.argv.includes('--once') || process.env.GITHUB_ACTIONS === 'true';
+  const args = process.argv.slice(2);
+  const isOnce = args.includes('--once');
+  
+  // Intervalo em segundos (padrão: 30 segundos no modo instantâneo)
+  let intervalSec = 30;
+  const intervalArg = args.find(a => a.startsWith('--interval='));
+  if (intervalArg) {
+    intervalSec = parseInt(intervalArg.split('=')[1], 10) || 30;
+  }
+
+  // Duração total em minutos (se aplicável, ex: 25 minutos por ciclo no GitHub Actions)
+  let durationMin = null;
+  const durationArg = args.find(a => a.startsWith('--duration='));
+  if (durationArg) {
+    durationMin = parseInt(durationArg.split('=')[1], 10);
+  }
 
   console.log('======================================================');
-  console.log(`🤖 ROBÔ VIGIA DE BOLETINS CBMERJ INICIADO [Modo: ${isOnce ? 'Único / CI' : '24/7 Loop'}]`);
+  console.log(`🤖 ROBÔ VIGIA DE BOLETINS CBMERJ INICIADO`);
+  console.log(`   Modo: ${isOnce ? 'Único (One-off)' : `Instantâneo (Checagem a cada ${intervalSec}s)`}`);
+  if (durationMin) console.log(`   Duração desta sessão: ${durationMin} minutos`);
   console.log('======================================================');
 
   if (isOnce) {
@@ -244,15 +261,36 @@ if (process.argv[1] && process.argv[1].endsWith('boletimWatcher.js')) {
       }
     })();
   } else {
-    // Primeira checagem imediata
-    keepAlive();
-    checkNewBulletin();
-
-    // Loop a cada 10 minutos (600.000 ms)
-    setInterval(async () => {
+    // Modo Instantâneo (Loop a cada intervalSec segundos)
+    (async () => {
       await keepAlive();
       await checkNewBulletin();
-    }, 10 * 60 * 1000);
+
+      let secondsElapsed = 0;
+      const intervalMs = intervalSec * 1000;
+
+      const timer = setInterval(async () => {
+        secondsElapsed += intervalSec;
+
+        // Keep-Alive a cada 5 minutos (300s)
+        if (secondsElapsed % 300 === 0) {
+          await keepAlive();
+        }
+
+        try {
+          await checkNewBulletin();
+        } catch (err) {
+          console.error('[Vigia] Erro na checagem:', err.message);
+        }
+
+        // Se tiver limite de duração definido para o runner (ex: 25 minutos)
+        if (durationMin && secondsElapsed >= durationMin * 60) {
+          console.log(`[Vigia] Tempo da sessão de ${durationMin} minutos atingido. Finalizando ciclo com sucesso.`);
+          clearInterval(timer);
+          process.exit(0);
+        }
+      }, intervalMs);
+    })();
   }
 }
 

@@ -1,13 +1,17 @@
-name: Vigia Boletim CBMERJ 24/7
+name: Vigia Boletim CBMERJ 24/7 (Instantâneo 30s)
 
 on:
   schedule:
-    # Executa a cada 15 minutos (cron do GitHub Actions)
-    - cron: '*/15 * * * *'
-  workflow_dispatch: # Permite disparo manual com 1 clique no painel do GitHub Actions
+    # Executa a cada 25 minutos (emendando ciclos contínuos)
+    - cron: '*/25 * * * *'
+  workflow_dispatch: # Permite disparo manual
+
+concurrency:
+  group: vigia-boletim
+  cancel-in-progress: false
 
 permissions:
-  contents: write # Permite salvar data/last_bulletin.json de volta no repositório
+  contents: write
 
 jobs:
   vigiar-boletim:
@@ -27,27 +31,25 @@ jobs:
       - name: Instalar dependências
         run: npm install --omit=dev --no-audit --no-fund
 
-      - name: Executar Checagem de Boletim CBMERJ
+      - name: Executar Vigia Instantâneo (Checagem a cada 30s por 24 min)
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           INTRANET_COOKIE: ${{ secrets.INTRANET_COOKIE }}
-          GITHUB_ACTIONS: 'true'
-        run: node server/boletimWatcher.js --once
+        run: node server/boletimWatcher.js --duration=24 --interval=30
 
       - name: Persistir estado do último boletim processado
+        if: always()
         run: |
           git config --global user.name "Boletim Bot CBMERJ"
           git config --global user.email "bot-boletim@cbmerj.local"
-          # Descartar alterações geradas pelo npm install (ex: package-lock.json)
           git checkout -- package-lock.json 2>/dev/null || true
           
-          # Verificar se data/last_bulletin.json teve alterações
           if [ -n "$(git status --porcelain data/last_bulletin.json)" ]; then
             git add data/last_bulletin.json
             git commit -m "chore: atualizar status do ultimo boletim [skip ci]"
             git push
-            echo "Estado do último boletim atualizado no repositório!"
+            echo "Estado do último boletim atualizado com sucesso no repositório!"
           else
-            echo "Nenhuma alteração no estado do boletim. Repositório já está em dia."
+            echo "Nenhuma alteração no estado do boletim. Repositório em dia."
           fi
