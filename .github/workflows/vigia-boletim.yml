@@ -16,15 +16,16 @@ jobs:
     steps:
       - name: Baixar código do repositório
         uses: actions/checkout@v4
+        with:
+          persist-credentials: true
 
       - name: Configurar ambiente Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: 'npm'
 
       - name: Instalar dependências
-        run: npm install --omit=dev
+        run: npm install --omit=dev --no-audit --no-fund
 
       - name: Executar Checagem de Boletim CBMERJ
         env:
@@ -38,6 +39,15 @@ jobs:
         run: |
           git config --global user.name "Boletim Bot CBMERJ"
           git config --global user.email "bot-boletim@cbmerj.local"
-          git add data/last_bulletin.json
-          git diff --quiet && git diff --staged --quiet || (git commit -m "chore: atualizar status do ultimo boletim [skip ci]" && git push)
-
+          # Descartar alterações geradas pelo npm install (ex: package-lock.json)
+          git checkout -- package-lock.json 2>/dev/null || true
+          
+          # Verificar se data/last_bulletin.json teve alterações
+          if [ -n "$(git status --porcelain data/last_bulletin.json)" ]; then
+            git add data/last_bulletin.json
+            git commit -m "chore: atualizar status do ultimo boletim [skip ci]"
+            git push
+            echo "Estado do último boletim atualizado no repositório!"
+          else
+            echo "Nenhuma alteração no estado do boletim. Repositório já está em dia."
+          fi
