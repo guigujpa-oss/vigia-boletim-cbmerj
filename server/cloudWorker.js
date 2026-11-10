@@ -50,25 +50,34 @@ async function syncInitialState() {
   }
 }
 
-// 2. Loop de verificação
+// 2. Loop de verificação blindado contra travamentos
 async function runCheckLoop() {
-  if (isChecking) return;
+  if (isChecking) {
+    console.log(`[CloudWorker] [${new Date().toLocaleTimeString()}] Checagem anterior ainda em andamento, aguardando...`);
+    return;
+  }
   isChecking = true;
   lastCheckTime = new Date().toISOString();
   stats.totalChecks++;
 
   try {
-    const res = await checkNewBulletin();
+    // Timeout rígido de 50 segundos para nunca travar a promise
+    const checkPromise = checkNewBulletin();
+    const timeoutPromise = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error('Timeout de 50s excedido na checagem')), 50000)
+    );
+
+    const res = await Promise.race([checkPromise, timeoutPromise]);
     if (res && res.length > 0) {
       stats.bulletinsFound += res.length;
       lastStatus = `Detectado(s) ${res.length} novo(s) boletim(ns) em ${lastCheckTime}`;
     } else {
-      lastStatus = `Sem novos boletins. Última checagem: ${lastCheckTime}`;
+      lastStatus = `Sem novos boletins. Última checagem: ${new Date().toLocaleTimeString()}`;
     }
   } catch (err) {
     stats.errors++;
     lastStatus = `Erro na checagem: ${err.message}`;
-    console.error('[CloudWorker] Erro na verificação:', err);
+    console.error(`[CloudWorker] [${new Date().toLocaleTimeString()}] Erro na verificação:`, err.message);
   } finally {
     isChecking = false;
   }
@@ -180,7 +189,7 @@ async function start() {
     await keepAlive();
   }, 5 * 60 * 1000);
 
-  // Auto-ping para evitar hibernação no Render (a cada 10 min)
+  // Auto-ping para evitar hibernação no Render (a cada 4 minutos)
   const selfUrl = process.env.RENDER_EXTERNAL_URL || process.env.SELF_URL;
   if (selfUrl) {
     console.log(`[CloudWorker] Auto-ping ativado para: ${selfUrl}`);
@@ -191,7 +200,7 @@ async function start() {
       } catch (err) {
         console.warn('[CloudWorker] Falha no auto-ping:', err.message);
       }
-    }, 10 * 60 * 1000);
+    }, 4 * 60 * 1000);
   }
 }
 

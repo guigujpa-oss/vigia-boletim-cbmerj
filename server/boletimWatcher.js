@@ -46,6 +46,7 @@ export async function keepAlive() {
   if (!cookie) return;
   try {
     const res = await fetch('https://intranet.cbmerj.rj.gov.br/Dashboard', {
+      signal: AbortSignal.timeout(15000),
       headers: {
         'Cookie': cookie,
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
@@ -69,9 +70,10 @@ export async function checkNewBulletin() {
   const currentMonth = now.getMonth() + 1; // 1-12
 
   const listUrl = `https://intranet.cbmerj.rj.gov.br/sistemas/boletim/index.php/boletim/boletimListagem/${currentMonth}`;
-  console.log(`[Vigia] Verificando novos boletins em: ${listUrl}...`);
+  console.log(`[Vigia] [${new Date().toLocaleTimeString()}] Verificando novos boletins em: ${listUrl}...`);
 
   const res = await fetch(listUrl, {
+    signal: AbortSignal.timeout(25000),
     headers: {
       'Cookie': cookie,
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
@@ -120,7 +122,7 @@ export async function checkNewBulletin() {
   });
 
   if (newBulletins.length === 0) {
-    console.log(`[Vigia] Sem novidades. Último boletim processado continua sendo: ${state.lastName || 'BOL203'} (ID: ${state.lastId || '913165'})`);
+    console.log(`[Vigia] [${new Date().toLocaleTimeString('pt-BR')}] Sem novos boletins na Intranet. Último processado: ${state.lastName || 'BOL204'} (ID: ${state.lastId || '913564'}).`);
     return null;
   }
 
@@ -142,6 +144,7 @@ export async function checkNewBulletin() {
 
     console.log(`[Vigia] Baixando PDF de: ${pdfUrl}...`);
     const dlRes = await fetch(pdfUrl, {
+      signal: AbortSignal.timeout(60000),
       headers: {
         'Cookie': cookie,
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
