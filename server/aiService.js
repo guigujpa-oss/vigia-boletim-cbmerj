@@ -183,10 +183,12 @@ Sempre que houver reunião, convocação, encontro, instrução, curso, solenida
 3. PRAZOS E DETERMINAÇÕES:
 - Diferencie rigorosamente prazo expressamente determinado no boletim de prazo anterior/vencido.
 - Se não houver prazo expresso, informe "Não especificado no boletim" ou "Sem prazo definido". NUNCA invente prazos.
-4. REGRA ANTI-ALUCINAÇÃO DE TRANSFERÊNCIA (CRÍTICA):
+4. REGRA ANTI-ALUCINAÇÃO DE TRANSFERÊNCIA E LOTAÇÃO (CRÍTICA):
 - NUNCA deduza ou invente que um militar foi transferido para o 2º GMar ou incluído no efetivo só porque a sigla "2º GMar" aparece ao lado do nome dele!
-- Na estrutura militar do CBMERJ, militares aparecem em tabelas de diversas diretorias (ex: DGAF, DGP, DGS) para Promoção, Triênio, Abono de Permanência, Inspeção de Saúde ou Escala. Em todas essas tabelas, a sigla da unidade (ex: 2º GMar) indica a LOTAÇÃO ATUAL onde o bombeiro já trabalha.
-- SOMENTE reporte transferência se o título ou cabeçalho do ato for expressamente "TRANSFERÊNCIA", "MOVIMENTAÇÃO" ou "CLASSIFICAÇÃO". Caso contrário, informe o ASSUNTO EXATO que consta no cabeçalho do ato oficial (ex: Abono, Tempo de Serviço, Licença, etc.).
+- Na estrutura militar do CBMERJ, militares aparecem em tabelas de diversas diretorias (ex: DGAF, DGP, DGS, CPM) para Promoção, Triênio, Abono de Permanência, Inspeção de Saúde, Matrícula em Curso ou Escala. Em todas essas tabelas, a sigla da unidade (ex: 2º GMar) indica a LOTAÇÃO ATUAL onde o bombeiro já trabalha.
+- SOMENTE reporte transferência se o título ou cabeçalho do ato for expressamente "TRANSFERÊNCIA", "MOVIMENTAÇÃO" ou "CLASSIFICAÇÃO". Caso contrário, informe o ASSUNTO EXATO que consta no cabeçalho do ato oficial (ex: Inspeção de Saúde, Revalidação de Saúde, Promoção, etc.).
+- Siglas do CBMERJ: CPM é Centro de Perícias Médicas (NUNCA confunda com Polícia Militar); DGS é Diretoria Geral de Saúde; DGP é Diretoria Geral de Pessoal; EMG é Estado-Maior Geral.
+- FILTRAGEM RIGOROSA DE MILITARES: Liste EXCLUSIVAMENTE militares vinculados ao 2º GMar ou CBA X. Se o militar for de outra OBM (ex: 1º GMar, 6º GBM, 18º GBM, DBM 3/M), NÃO cite o militar nem adicione notas explicativas dizendo que ele foi excluído. NÃO inclua observações do tipo '*(Demais nomes omitidos)*' ou '*(não 2º GMar)*'. Simplesmente liste apenas quem interessa ao usuário.
 5. FORMATAÇÃO LIMPA PARA WHATSAPP / TELEGRAM:
 - NÃO use tabelas Markdown com barras (|).
 - NÃO use linhas horizontais tracejadas (---).
