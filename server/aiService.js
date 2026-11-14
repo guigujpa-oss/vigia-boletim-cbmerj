@@ -25,7 +25,9 @@ function sanitizeForWhatsApp(rawText) {
 }
 
 /**
- * Extrai cirurgicamente apenas as linhas essenciais com contexto (+/- 6 linhas).
+ * Extrai as páginas relevantes na íntegra (com limpeza de cabeçalhos e rodapés repetitivos),
+ * garantindo que a IA veja o TÍTULO DO ATO OFICIAL, a DIRETORIA emissora e o CONTEXTO REAL,
+ * evitando qualquer alucinação de transferência quando se trata de promoção, abono, triênio, etc.
  */
 export function extractRelevantContext(pages, userName = 'Guilherme Martins Botelho') {
   const snippets = [];
@@ -38,53 +40,39 @@ export function extractRelevantContext(pages, userName = 'Guilherme Martins Bote
       }
     }
 
-    const lines = page.text.split('\n');
-    const matchedIdxs = [];
+    const text = page.text;
+    const hasUser = /Guilherme\s+Martins\s+Botelho|Guilherme\s+Martins/i.test(text);
+    const hasGmar = /2[º°\.\s]*G(?:MAR|rupamento\s+Mar[íi]timo)/i.test(text);
+    const hasCbax = /CBA[\s\-]*(?:X|10|DEZ)/i.test(text);
+    const hasCsmar = /CSMAR|Salvamento\s+no\s+Mar/i.test(text);
+    const hasMajorRule = /REGULAMENTO\s+DE\s+UNIFORMES|ALTERAÇÃO\s+DE\s+UNIFORME|DISTINTIVO\s+DE\s+OBM/i.test(text);
 
-    lines.forEach((line, idx) => {
-      if (line.includes('BOLETIM DA SEDEC') || line.includes('DGCCO/CBA X/GOA')) return;
-
-      const hasUser = /Guilherme\s+Martins\s+Botelho|Guilherme\s+Martins/i.test(line);
-      const hasGmar = /2[º°\.\s]*G(?:MAR|rupamento\s+Mar[íi]timo)/i.test(line);
-      const hasCbax = /CBA[\s\-]*(?:X|10|DEZ)/i.test(line);
-      const hasCsmar = /CSMAR|Salvamento\s+no\s+Mar/i.test(line);
-      const hasMajorRule = /REGULAMENTO\s+DE\s+UNIFORMES|ALTERAÇÃO\s+DE\s+UNIFORME|DISTINTIVO\s+DE\s+OBM/i.test(line);
-
-      if (hasUser || hasGmar || hasCbax || hasCsmar || hasMajorRule) {
-        matchedIdxs.push(idx);
+    // Se a página tem menção relevante, extrair o texto limpo preservando cabeçalhos e títulos
+    if (hasUser || hasGmar || hasCbax || hasCsmar || hasMajorRule) {
+      // Ignorar páginas onde a única menção é fonte genérica de socorro
+      if (!hasUser && !hasGmar && !hasCsmar && !hasMajorRule && text.includes('*FONTE: DGCCO/CBA X/GOA') && !text.includes('CBA X/')) {
+        continue;
       }
-    });
 
-    if (matchedIdxs.length > 0) {
-      const lineSet = new Set();
-      matchedIdxs.forEach(idx => {
-        const start = Math.max(0, idx - 6);
-        const end = Math.min(lines.length - 1, idx + 8);
-        for (let i = start; i <= end; i++) {
-          lineSet.add(i);
-        }
-      });
-
-      const sorted = Array.from(lineSet).sort((a, b) => a - b);
-      const cleaned = sorted
-        .map(i => lines[i].trim())
-        .filter(l => l && !l.includes('BOLETIM DA SEDEC') && !l.includes('voltar_ao_sumário'))
-        .join('\n');
+      const lines = page.text.split('\n');
+      const cleanedLines = lines
+        .map(l => l.trim())
+        .filter(l => l && !l.startsWith('BOLETIM DA SEDEC') && !l.includes('voltar_ao_sumário') && !l.startsWith('FL.'));
 
       snippets.push({
         pageNum: page.pageNum,
-        text: cleaned
+        text: cleanedLines.join('\n')
       });
     }
   }
 
-  // Limite máximo seguro: 9.000 caracteres
+  // Limite de segurança de 24.000 caracteres (~5.500 tokens)
   let totalChars = 0;
   const pruned = [];
   for (const s of snippets) {
-    if (totalChars + s.text.length > 9000) {
-      const remaining = Math.max(0, 9000 - totalChars);
-      if (remaining > 200) {
+    if (totalChars + s.text.length > 24000) {
+      const remaining = Math.max(0, 24000 - totalChars);
+      if (remaining > 500) {
         pruned.push({ pageNum: s.pageNum, text: s.text.substring(0, remaining) });
       }
       break;
@@ -195,7 +183,11 @@ Sempre que houver reunião, convocação, encontro, instrução, curso, solenida
 3. PRAZOS E DETERMINAÇÕES:
 - Diferencie rigorosamente prazo expressamente determinado no boletim de prazo anterior/vencido.
 - Se não houver prazo expresso, informe "Não especificado no boletim" ou "Sem prazo definido". NUNCA invente prazos.
-4. FORMATAÇÃO LIMPA PARA WHATSAPP / TELEGRAM:
+4. REGRA ANTI-ALUCINAÇÃO DE TRANSFERÊNCIA (CRÍTICA):
+- NUNCA deduza ou invente que um militar foi transferido para o 2º GMar ou incluído no efetivo só porque a sigla "2º GMar" aparece ao lado do nome dele!
+- Na estrutura militar do CBMERJ, militares aparecem em tabelas de diversas diretorias (ex: DGAF, DGP, DGS) para Promoção, Triênio, Abono de Permanência, Inspeção de Saúde ou Escala. Em todas essas tabelas, a sigla da unidade (ex: 2º GMar) indica a LOTAÇÃO ATUAL onde o bombeiro já trabalha.
+- SOMENTE reporte transferência se o título ou cabeçalho do ato for expressamente "TRANSFERÊNCIA", "MOVIMENTAÇÃO" ou "CLASSIFICAÇÃO". Caso contrário, informe o ASSUNTO EXATO que consta no cabeçalho do ato oficial (ex: Abono, Tempo de Serviço, Licença, etc.).
+5. FORMATAÇÃO LIMPA PARA WHATSAPP / TELEGRAM:
 - NÃO use tabelas Markdown com barras (|).
 - NÃO use linhas horizontais tracejadas (---).
 - Use apenas *negrito simples* (*texto*) e marcadores de hífen (-).
