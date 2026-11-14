@@ -35,7 +35,7 @@ function loadState() {
   if (fs.existsSync(STATE_FILE)) {
     try {
       return JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
-    } catch (e) {}
+    } catch (e) { }
   }
   return { lastId: null, lastName: null, lastCheck: null };
 }
@@ -222,161 +222,73 @@ export async function parseAndFilterBulletin(pdfPath, bulletinName) {
       pages,
       userName: 'Guilherme Martins Botelho'
     });
-    if (aiAnalysis && aiAnalysis.length > 100) {
+    if (aiAnalysis && aiAnalysis.length > 50) {
       console.log(`[Vigia] Análise por IA concluída com sucesso (${aiAnalysis.length} caracteres).`);
       return aiAnalysis;
     }
   } catch (err) {
-    console.warn(`[Vigia] Aviso: Análise por IA indisponível ou com erro (${err.message}). Utilizando parser de contingência.`);
+    console.warn(`[Vigia] Erro na análise por IA (${err.message}). Gerando relatório de contingência limpo.`);
   }
 
-  // 2. Parser de Contingência Heurístico (Caso a API de IA esteja indisponível)
-  const rawMatters = [];
+  // 2. Relatório de Contingência Limpo (Zero frases truncadas, zero tabelas despedaçadas)
+  const matchedPages = new Set();
+  let hasUser = false;
 
   for (const page of pages) {
-    // 1. Ignorar páginas de sumário/índice (1 a 3 com linhas pontilhadas)
     if (page.pageNum <= 3) continue;
+    if (page.text.includes('ESTATÍSTICA DE SOCORROS PRESTADOS')) continue;
 
-    // 2. Ignorar páginas e tabelas de estatísticas diárias de socorro
-    if (page.text.includes('ESTATÍSTICA DE SOCORROS PRESTADOS') || page.text.includes('MÉDIA DE EVENTOS POR HORA') || page.text.includes('TOTAL DE EVENTOS ACUMULADOS')) {
-      continue;
+    const text = page.text;
+    if (/Guilherme\s+Martins\s+Botelho|Guilherme\s+Martins/i.test(text)) {
+      hasUser = true;
+      matchedPages.add(page.pageNum);
     }
-
-    const lines = page.text.split('\n');
-
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i].trim();
-
-      // Descartar linhas de cabeçalho padrão, rodapés estatísticos e fontes genéricas
-      if (!line || line.startsWith('BOLETIM DA SEDEC') || line.includes('*FONTE:') || line.includes('DGCCO/CBA X/GOA') || line.startsWith('FL.') || line.includes('Corpo de Bombeiros Militar do Estado')) {
-        continue;
-      }
-
-      const hasUser = /Guilherme\s+Martins\s+Botelho|Guilherme\s+Martins/i.test(line);
-      const hasGmar = /2[º°\.\s]*G(?:MAR|rupamento\s+Mar[íi]timo)/i.test(line);
-      const hasCbax = /CBA[\s\-]*(?:X|10|DEZ)/i.test(line);
-      const hasCmd = /Rafael\s+da\s+Silva\s+Ferreira|Diogo\s+Fellipe\s+Taveira|Ruan\s+Carlos\s+Gasiglia/i.test(line);
-      const hasCsmar = /CSMAR|Curso\s+de\s+Salvamento\s+no\s+Mar/i.test(line);
-
-      if (hasUser || hasGmar || hasCbax || hasCmd || (hasCsmar && page.pageNum > 3)) {
-        // Limpar ruídos da Intranet e do texto
-        let cleanLine = line.replace(/voltar_ao_sum[aá]rio/gi, '').trim();
-        
-        // Encontrar título da matéria / nota olhando para trás
-        let title = '';
-        for (let k = i; k >= Math.max(0, i - 25); k--) {
-          const l = lines[k].replace(/voltar_ao_sum[aá]rio/gi, '').trim();
-          if (/^(?:[0-9]+\.|\bEDITAL\b|\bNOTA\b|\bPORTARIA\b|[I|V|X]+\s*[-–]|\bANEXO\b|[A-ZÇÃÕ\s]{6,})/i.test(l) && l.length > 5 && l.length < 130 && !l.includes('BOLETIM DA SEDEC')) {
-            title = l;
-            break;
-          }
-        }
-
-        // Títulos claros e semânticos se o cabeçalho for genérico
-        if (!title || title.length < 8 || title.includes('TORNA PÚBLICA')) {
-          if (hasCsmar || /CSMAR|Salvamento\s+no\s+Mar/i.test(cleanLine)) {
-            title = 'Edital do Curso de Salvamento no Mar (CSMar)';
-          } else if (/movimenta|transfer|apresenta|classifica|designa/i.test(cleanLine)) {
-            title = 'Movimentação / Transferência de Militares';
-          } else if (/escala|apoio|evento|riocentro|wrc/i.test(cleanLine)) {
-            title = 'Emprego Operacional / Escalação de Meios e Efetivo';
-          } else if (hasUser) {
-            title = 'Publicação Nominal — Guilherme Martins Botelho';
-          } else if (hasGmar) {
-            title = 'Nota de Interesse do 2º GMar (Barra da Tijuca)';
-          } else {
-            title = 'Determinação / Nota de Interesse do CBA X';
-          }
-        }
-
-        // Capturar contexto completo do parágrafo
-        const start = Math.max(0, i - 2);
-        const end = Math.min(lines.length, i + 9);
-        const contextLines = lines.slice(start, end)
-          .map(l => l.replace(/voltar_ao_sum[aá]rio/gi, '').trim())
-          .filter(l => l.length > 0 && !l.startsWith('BOLETIM DA SEDEC') && !l.includes('*FONTE:') && !l.startsWith('FL.'));
-
-        const snippet = contextLines.join(' ').replace(/\s{2,}/g, ' ');
-
-        // Garantir qualidade mínima: o trecho precisa ter pelo menos 40 caracteres e conteúdo substantivo
-        if (snippet.length >= 40 && !snippet.includes('*FONTE: DGCCO')) {
-          rawMatters.push({
-            page: page.pageNum,
-            isUser: hasUser,
-            isGmar: hasGmar,
-            isCbax: hasCbax,
-            isCmd: hasCmd,
-            title: title.replace(/[_]{2,}/g, '').trim(),
-            snippet: snippet
-          });
-
-          i += 10; // Pular para evitar pegar múltiplos fragmentos da mesma nota
-        }
+    if (/2[º°\.\s]*G(?:MAR|rupamento\s+Mar[íi]timo)|CBA[\s\-]*(?:X|10|DEZ)|CSMAR|Salvamento\s+no\s+Mar/i.test(text)) {
+      if (!text.includes('*FONTE: DGCCO/CBA X/GOA')) {
+        matchedPages.add(page.pageNum);
       }
     }
   }
 
-  // Agrupar matérias para eliminar repetições na mesma página ou tema contíguo
-  const distinctMatters = [];
-  for (const m of rawMatters) {
-    const isDuplicate = distinctMatters.some(d => {
-      const samePage = d.page === m.page;
-      const sameTheme = (d.title.includes('CSMar') && m.title.includes('CSMar')) || (d.title.includes('Movimentação') && m.title.includes('Movimentação'));
-      return samePage || (sameTheme && Math.abs(d.page - m.page) <= 2);
-    });
+  const pagesList = Array.from(matchedPages).sort((a, b) => a - b);
+  const pagesStr = pagesList.length > 0 ? pagesList.map(p => `Fl. ${p}`).join(', ') : 'Nenhuma página identificada';
 
-    if (!isDuplicate) {
-      distinctMatters.push(m);
-    }
-  }
-
-  // Ordenar priorizando publicações nominais primeiro, depois GMar e CBA X
-  distinctMatters.sort((a, b) => {
-    if (a.isUser && !b.isUser) return -1;
-    if (!a.isUser && b.isUser) return 1;
-    return a.page - b.page;
-  });
-
-  // Montar Relatório Executivo Estruturado
-  let report = `Análise do Boletim para Guilherme Martins Botelho — 2º GMar / CBA X\n\n`;
-  report += `1. IDENTIFICAÇÃO DO DOCUMENTO\n• Órgão: SEDEC / CBMERJ\n• Boletim: ${bolHeader}\n• Total de Páginas: ${pages.length}\n\n`;
-
-  const userMentions = distinctMatters.filter(m => m.isUser);
-
-  if (distinctMatters.length === 0) {
-    report += `2. RESUMO EXECUTIVO\nNão foram identificadas publicações ou ordens diretamente relacionadas a Guilherme Martins Botelho, ao 2º GMar ou ao CBA X neste boletim.\n\n`;
-    report += `MENSAGEM PRONTA PARA ENCAMINHAMENTO:\n\nBom dia, senhores.\n\nNão identifiquei, neste boletim (${bolHeader}), tópicos diretamente relacionados a Guilherme Martins Botelho, ao 2º GMar, ao CBA X ou ao comando da unidade.`;
-    return report;
-  }
-
-  report += `2. RESUMO EXECUTIVO\n`;
-  if (userMentions.length > 0) {
-    report += `🚨 ATENÇÃO: Identificada publicação nominal referente a Guilherme Martins Botelho (Fl. ${userMentions.map(u => u.page).join(', ')}).\n`;
+  let contingencyReport = `*BOLETIM ${bolHeader}*\n\n`;
+  contingencyReport += `*1. ATENÇÃO DO COMANDO*\n`;
+  if (hasUser) {
+    contingencyReport += `- *Assunto:* Publicação Nominal — Guilherme Martins Botelho\n`;
+    contingencyReport += `- *O que aconteceu:* Localizada publicação nominal citando seu nome no boletim.\n`;
+    contingencyReport += `- *Providência:* Leitura imediata da página indicada no PDF anexo.\n`;
+    contingencyReport += `- *Página:* ${pagesStr}\n\n`;
+  } else if (pagesList.length > 0) {
+    contingencyReport += `- *Assunto:* Publicações de Interesse do 2º GMar / CBA X\n`;
+    contingencyReport += `- *O que aconteceu:* Foram identificadas publicações citando o 2º GMar ou CBA X nas páginas: ${pagesStr}.\n`;
+    contingencyReport += `- *Providência:* Consultar o PDF anexo nestas páginas para verificação integral.\n`;
+    contingencyReport += `- *Página:* ${pagesStr}\n\n`;
   } else {
-    report += `• Publicação Nominal: Não há menção nominal a Guilherme Martins Botelho.\n`;
-  }
-  report += `• Unidade / Comando: Foram localizadas ${distinctMatters.length} matérias de interesse operacional e administrativo para o 2º GMar / CBA X.\n\n`;
-
-  report += `3. ALERTAS PRIORITÁRIOS E DETALHAMENTO:\n`;
-  for (const m of distinctMatters.slice(0, 5)) {
-    const tag = m.isUser ? '🚨 PRIORIDADE MÁXIMA' : '⚠️ PRIORIDADE ALTA';
-    report += `${tag} | Fl. ${m.page}\n• Matéria: ${m.title}\n• Providência / Resumo: ${m.snippet.substring(0, 320)}...\n\n`;
+    contingencyReport += `Nenhuma providência administrativa ou operacional identificada para o 2º GMar ou CBA X.\n\n`;
   }
 
-  report += `---\n\nMENSAGEM PRONTA PARA ENCAMINHAMENTO:\n\nBom dia, senhores.\n\nSeguem, abaixo, os tópicos relacionados à unidade, extraídos do Boletim da SEDEC/CBMERJ (${bolHeader}), com a indicação das respectivas páginas:\n\n`;
+  contingencyReport += `*2. REUNIÕES, CONVOCAÇÕES E COMPROMISSOS*\n`;
+  contingencyReport += `Nenhuma reunião ou convocação confirmada no modo de contingência. Verificar PDF anexo (${pagesStr}).\n\n`;
 
-  for (const m of distinctMatters.slice(0, 5)) {
-    report += `• [${m.title}]\n  - Providência / Resumo: ${m.snippet.substring(0, 260)}...\n  - Fonte: Boletim da SEDEC/CBMERJ, página ${m.page}.\n\n`;
-  }
+  contingencyReport += `*3. ALTERAÇÕES RELACIONADAS AO 2º GMAR / CBA X*\n`;
+  contingencyReport += `Publicações de interesse registradas nas páginas: ${pagesStr}.\n\n`;
 
-  return report;
+  contingencyReport += `*4. OUTROS ASSUNTOS IMPORTANTES*\n`;
+  contingencyReport += `Consultar o arquivo PDF na íntegra.\n\n`;
+
+  contingencyReport += `*5. PRAZOS A ACOMPANHAR*\n`;
+  contingencyReport += `Verificar prazos regimentais diretamente nas matérias das páginas: ${pagesStr}.`;
+
+  return contingencyReport;
 }
 
 // Iniciar vigia contínuo, execução pontual ou modo instantâneo
 if (process.argv[1] && process.argv[1].endsWith('boletimWatcher.js')) {
   const args = process.argv.slice(2);
   const isOnce = args.includes('--once');
-  
+
   let intervalSec = 30;
   const intervalArg = args.find(a => a.startsWith('--interval='));
   if (intervalArg) {
